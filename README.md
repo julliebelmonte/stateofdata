@@ -111,10 +111,7 @@ Pipeline modular com três funções:
 | 2.7 | Tempo de experiência em dados por gênero |
 | 2.8 | Modalidade de trabalho por gênero |
 | 2.9 | Adoção de ferramentas de IA generativa por gênero |
-
-### 2.10 — Regional
-
-Representatividade feminina comparada entre as 5 regiões brasileiras.
+| 2.10 | Representatividade feminina comparada entre as 5 regiões brasileiras |
 
 ---
 
