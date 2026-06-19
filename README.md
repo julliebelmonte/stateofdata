@@ -1,6 +1,6 @@
 # State of Data Brasil — Desigualdades de Gênero (2021–2024)
 
-Análise longitudinal das edições 2021–2024 do **State of Data Brasil**, investigando como gênero se relaciona com remuneração, senioridade e acesso a cargos de liderança no mercado de dados brasileiro. O projeto combina EDA, inferência estatística, modelagem preditiva e explicabilidade via SHAP.
+Análise longitudinal das edições 2021–2024 do **State of Data Brasil**, investigando como gênero se relaciona com remuneração, senioridade e acesso a cargos de liderança no mercado de dados brasileiro. O projeto combina EDA, inferência estatística, modelagem preditiva com análise de equidade (Fairlearn) e explicabilidade via SHAP.
 
 ---
 
@@ -30,8 +30,6 @@ stateofdata/
 └── README.md
 ```
 
-> **Atenção:** execute sempre a **Seção 1 (Pré-processamento)** antes das demais. As seções 2–5 dependem dos arquivos `df_train.parquet` e `df_test.parquet` que ela exporta.
-
 ---
 
 ## Pré-requisitos
@@ -40,7 +38,7 @@ Python 3.9+
 
 ```bash
 pip install pandas numpy plotly matplotlib seaborn scipy statsmodels \
-            scikit-learn xgboost shap openpyxl pyarrow nbformat
+            scikit-learn xgboost shap fairlearn openpyxl pyarrow nbformat
 ```
 
 ---
@@ -49,46 +47,52 @@ pip install pandas numpy plotly matplotlib seaborn scipy statsmodels \
 
 | Seção | Título | Descrição |
 |-------|--------|-----------|
-| **0** | Configurações | Imports, constantes, mapeamentos e paleta de cores |
-| **1** | Pré-processamento | Pipeline de limpeza e unificação dos 4 anos |
+| **0** | Configurações | Imports, constantes, mapeamentos, engenharia de features de IA e paleta de cores |
+| **1** | Pré-processamento | Pipeline de limpeza, unificação dos 4 anos e criação de targets salariais agrupados |
 | **2** | EDA | 10 visualizações interativas (Plotly): gênero e regional |
 | **3** | Estatística Inferencial | Hipóteses H1–H6 com qui-quadrado, Mann-Whitney, Spearman, regressão logística |
-| **4** | Modelagem (ML) | Treino/CV/avaliação com análise de equidade por gênero |
-| **5** | Explicabilidade (SHAP) | Importância de features com destaque para variáveis de IA |
+| **4** | Modelagem (ML) | Treino/CV/avaliação com análise de equidade por gênero via Fairlearn |
+| **5** | Explicabilidade (SHAP) | Importância de features global e por gênero, com destaque para variáveis de IA |
 
 ---
 
 ## Seção 0 — Configurações
 
-Define toda a infraestrutura de mapeamento:
+Define toda a infraestrutura de mapeamento e engenharia de features:
 
 - **`COLUMN_MAPPING`** — normaliza nomes de colunas entre os 4 anos (esquemas divergem entre edições)
-- **`IA_COLS`** — mapeamento das features de IA generativa, disponíveis apenas em 2023 e 2024
+- **`IA_COLS_RAW`** — colunas brutas de IA generativa disponíveis em 2023 e 2024
+- **`engenharia_ia()`** — cria 7 features binárias (`ia_*`) a partir das colunas brutas: uso individual (não usa / gratuita / paga bolso próprio / paga pela empresa / Copilot), prioridade estratégica da empresa e uso difuso na organização
+- **`IA_FEATURES_MODELO_B`** — lista das 7 features de IA usadas no Modelo B
 - **`FAIXA_SALARIAL_MAP / ORDEM`** — padronização e ordenação ordinal das 12 faixas (R$1k a R$40k+)
 - **`CARGO_MAP`** — consolida ~30 variações em 8 categorias (Analista, Engenheiro, Cientista de Dados, etc.)
-- **`AREA_FORMACAO_MAP`, `REGIAO_MAP`, `SITUACAO_MAP`** — normalizações auxiliares
+- **`AREA_FORMACAO_MAP`, `REGIAO_MAP`, `SITUACAO_MAP`, `MODALIDADE_MAP`** — normalizações auxiliares
 - **Constantes globais:** `SEED = 42`, `ALPHA = 0.05`, paletas de cores por gênero e região
 
 ---
 
 ## Seção 1 — Pré-processamento
 
-Pipeline modular com três funções:
+Pipeline modular com quatro funções:
 
 - **`build_year_dataframe(df_raw, year)`** — seleciona e renomeia colunas para esquema unificado; injeta features de IA em 2023/2024
 - **`preprocess(df)`** — aplica transformações por variável (ver tabela abaixo)
+- **`criar_targets_salariais(df)`** — cria versões agrupadas da faixa salarial para experimentos de sensibilidade
 - **`run_pipeline(dfs_raw)`** — executa as etapas para todos os anos e exporta os artefatos
 
 | Variável | Transformação |
 |----------|--------------|
 | `genero` | Filtra apenas "Masculino" e "Feminino" |
 | `faixa_salarial` | Padroniza texto e converte para Categorical ordinal (12 faixas) |
-| `nivel` | Categorical ordinal: Júnior → Pleno → Sênior (Gestor excluído — ver decisões metodológicas) |
+| `faixa_salarial_3` | Agrupamento em 3 classes: Baixa / Média / Alta |
+| `faixa_salarial_bin` | Binário: Alta (≥ R$12k) vs. demais |
+| `nivel` | Categorical ordinal: Júnior → Pleno → Sênior (Gestor excluído do ML — ver decisões metodológicas) |
 | `gestor` | Binarizado: Sim → 1, Não → 0 |
 | `nivel_ensino` | Categorical ordinal (6 níveis) |
 | `cargo` | Consolidado via `CARGO_MAP` (8 categorias) |
 | `regiao` | Normalizado; "Exterior" e "Prefiro não informar" removidos |
 | `situacao` | Categorias consolidadas via `SITUACAO_MAP` |
+| `modalidade` | Normalizado via `MODALIDADE_MAP` |
 
 **Artefatos exportados:** `df_full.parquet` (completo), `df_train.parquet` (2021–2023), `df_test.parquet` (2024).
 
@@ -97,8 +101,6 @@ Pipeline modular com três funções:
 ## Seção 2 — EDA
 
 10 visualizações interativas (Plotly), sem redundância entre si.
-
-### 2.1–2.9 — Por Gênero (longitudinal)
 
 | Subseção | Pergunta |
 |----------|----------|
@@ -136,15 +138,19 @@ Seis hipóteses testadas; todos os resultados exportados para `resultados_estati
 | Target | Tipo | Descrição |
 |--------|------|-----------|
 | `faixa_salarial` | Multiclasse ordinal | 12 faixas de R$1k a R$40k+ |
+| `faixa_salarial_3` | Multiclasse | 3 classes agrupadas: Baixa / Média / Alta |
+| `faixa_salarial_bin` | Binária | Alta (≥ R$12k) vs. demais |
 | `nivel` | Multiclasse ordinal | Júnior · Pleno · Sênior |
 | `gestor` | Binária | Atua ou não como gestor/a |
 
+Os experimentos centrais utilizam `TARGETS_CENTRAIS = ['gestor', 'nivel', 'faixa_salarial_bin']` com o estimador XGBoost.
+
 ### Dois modelos comparados
 
-| Modelo | Features extras | Objetivo |
-|--------|-----------------|----------|
-| **A** (baseline) | Nenhuma | Estrutura base do mercado |
-| **B** | 7 features de IA (`ia_*`) | Mede se uso de IA generativa é preditor relevante |
+| Modelo | Features | Objetivo |
+|--------|----------|---------|
+| **A** (baseline) | 9 features estruturais | Estrutura base do mercado |
+| **B** | Features estruturais + 7 features de IA (`ia_*`) | Mede se uso de IA generativa é preditor relevante |
 
 ### Algoritmos e seleção
 
@@ -154,56 +160,37 @@ Três algoritmos avaliados por target: **Logistic Regression**, **Random Forest*
 
 `ColumnTransformer` com imputação mediana + `StandardScaler` para numéricas, e imputação moda + `OneHotEncoder` (`handle_unknown='ignore'`) para categóricas.
 
-### Análise de equidade
+### Análise de equidade (Fairlearn)
 
-F1-macro reportado separadamente por gênero no conjunto de teste, permitindo identificar viés de desempenho entre grupos.
+Para cada target central, a análise de equidade reporta:
+
+- **F1-macro por gênero** — identifica viés de desempenho entre grupos
+- **`demographic_parity_difference`** — diferença na taxa de predição positiva entre gêneros
+- **`equalized_odds_difference`** — diferença nas taxas de verdadeiro positivo e falso positivo entre gêneros
 
 ---
 
 ## Seção 5 — Explicabilidade (SHAP)
 
-Para cada combinação (Modelo A/B) × target:
+### 5.1 SHAP global: Modelo A vs. Modelo B
+
+Para cada target central (Modelo A e B):
 
 1. Transforma o conjunto de teste com o pré-processador treinado
-2. Amostra até 300 observações (performance)
-3. Calcula SHAP via `TreeExplainer` (RF/XGBoost) ou `LinearExplainer` (Logistic Regression)
-4. Para multiclasse, agrega pela média dos valores absolutos entre classes e normaliza para soma = 1 (comparação proporcional entre modelos)
+2. Amostra até 200 observações (performance)
+3. Calcula SHAP via `TreeExplainer` (RF/XGBoost)
+4. Para multiclasse, agrega pela média dos valores absolutos entre classes e normaliza para soma = 1
 5. Plota top-15 features; no Modelo B, features de IA são destacadas em laranja
 
-A função `plot_shap_comparacao` gera painéis lado a lado (A vs B) para comparação direta.
+A função `plot_shap_bar` gera painéis lado a lado (A vs. B) para comparação direta do impacto das features de IA.
 
----
+### 5.2 SHAP por gênero + correlação de Spearman entre rankings
 
-## Decisões Metodológicas
+Para cada target central:
 
-| Decisão | Justificativa |
-|---------|--------------|
-| Faixa salarial como classificação ordinal | Dados coletados em faixas, não valor contínuo |
-| `Gestor` removido de `NIVEL_SENIORIDADE_ORDEM` no ML | Evita leakage com o target `gestor` |
-| Split temporal treino 2021–2023 / teste 2024 | Simula generalização real: modelo treinado no passado prediz o futuro |
-| Modelos A/B separados | Isola o efeito das variáveis de IA na performance preditiva |
-| `class_weight='balanced'` / `scale_pos_weight` | Mitiga desbalanceamento de classes, especialmente em `gestor` |
-| F1-macro como métrica principal | Robusta a desbalanceamento; penaliza igualmente erros em classes minoritárias |
-| SHAP normalizado (soma = 1) | Torna a importância relativa comparável entre Modelo A e B |
-| Fisher's z no Spearman (H4) | Testa se a correlação difere significativamente entre gêneros |
-| Cochran-Armitage (H5) | Complementa a regressão logística detectando tendência monotônica sem assumir linearidade |
+1. Calcula SHAP separadamente para respondentes masculinos e femininos
+2. Plota top-12 features para cada grupo (cores distintas por gênero; features de IA em laranja)
+3. Computa correlação de Spearman entre os rankings de importância dos dois grupos, reportando ρ, p-valor e interpretação qualitativa (Alta / Moderada / Baixa concordância)
 
----
 
-## Pontos de Atenção / Trabalho em Andamento
 
-- **Possível leakage no Modelo B para o target `gestor`:** features de IA podem estar preenchidas predominantemente por respondentes em cargos de gestão (padrão de resposta diferenciado). Requer investigação.
-- **Model drift entre anos** (previsto na proposta original) ainda não implementado.
-
----
-
-## Outputs Gerados
-
-| Arquivo | Conteúdo |
-|---------|----------|
-| `data/df_full.parquet` | Dataset unificado pós-processamento (2021–2024) |
-| `data/df_train.parquet` | Split de treino (2021–2023) |
-| `data/df_test.parquet` | Split de teste (2024) |
-| `df_full.xlsx` | Versão Excel do dataset completo |
-| `resultados_estatisticos.xlsx` | Tabelas de H1–H6 (6 abas) |
-| `figures/` | Gráficos EDA e SHAP em PNG (DPI 150) |
